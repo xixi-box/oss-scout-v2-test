@@ -1,0 +1,28 @@
+name: worker-smoke
+# P3 验收用：验证 workflow_dispatch 路径 + artifact 上传。
+# 仅用于 oss-scout v2 worker 测试，不扫描任何第三方项目。
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "job id for artifact naming"
+        default: "smoke"
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: fake worker run
+        run: |
+          mkdir -p artifacts/${{ github.event.inputs.job_id }}
+          cat > artifacts/${{ github.event.inputs.job_id }}/result.json <<EOF
+          {"schema_version": 1, "job_id": "${{ github.event.inputs.job_id }}",
+           "backend": "github_actions", "outcome": "succeeded"}
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: result-${{ github.event.inputs.job_id }}
+          path: artifacts/
