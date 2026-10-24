@@ -25,7 +25,14 @@ jobs:
           {"schema_version": 1, "job_id": "${{ github.event.inputs.job_id }}",
            "backend": "github_actions", "outcome": "succeeded"}
           EOF
+          # stdout 信封：与 Modal worker 同一协议，存储配额受限时的回传通道
+          python3 - <<'PY'
+          import json
+          env = {"result": json.load(open("artifacts/${{ github.event.inputs.job_id }}/result.json"))}
+          print("##OSSCOUT_RESULT##" + json.dumps(env))
+          PY
       - uses: actions/upload-artifact@v4
+        continue-on-error: true     # 存储配额满时不阻塞 run，结果走 stdout 信封
         with:
           name: result-${{ github.event.inputs.job_id }}
           path: artifacts/
