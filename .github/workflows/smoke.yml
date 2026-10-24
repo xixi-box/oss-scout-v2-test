@@ -7,6 +7,9 @@ on:
       job_id:
         description: "job id for artifact naming"
         default: "smoke"
+      oss_job_b64:
+        description: "base64 job payload (unused by smoke, echo-only)"
+        default: ""
 permissions:
   contents: read
 jobs:
