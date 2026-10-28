@@ -1,0 +1,77 @@
+name: oss-scout worker
+
+# 由 oss-scout 控制器 workflow_dispatch 调用，在**本仓库自己的环境**里执行修复。
+# 修复必须在项目自己的依赖/测试环境里跑，结果才可信。
+#
+# 安全边界：本 job 只有 contents: read，没有 GitHub 写权限。
+# 产出（patch + test report）走 artifact / stdout 信封回传，
+# 由控制器校验后才决定是否 push 分支、开 PR。
+
+on:
+  workflow_dispatch:
+    inputs:
+      oss_job_b64:
+        description: "base64(JSON) job payload (repo/base_sha/mode/test_cmd/ai_test_files)"
+        required: true
+        type: string
+      job_id:
+        description: "job id (used in artifact name)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Write job payload
+        shell: bash
+        env:
+          OSS_JOB_B64: ${{ inputs.oss_job_b64 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$OSS_JOB_B64" | base64 -d > "$RUNNER_TEMP/job.json"
+          python3 -c "import json;print('job ok, mode=', json.load(open('$RUNNER_TEMP/job.json'))['mode'])"
+
+      - name: Checkout target commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_SHA=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/job.json'))['base_sha'])")
+          git clone --filter=blob:none "https://github.com/${GITHUB_REPOSITORY}.git" "$RUNNER_TEMP/repo"
+          git -C "$RUNNER_TEMP/repo" fetch --depth 1 origin "$BASE_SHA"
+          git -C "$RUNNER_TEMP/repo" checkout --detach "$BASE_SHA"
+          echo "checked out $BASE_SHA"
+
+      - name: Get oss-scout worker
+        shell: bash
+        env:
+          WORKER_REPO: xixi-box/oss-scout
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://github.com/${WORKER_REPO}.git" "$RUNNER_TEMP/worker"
+          python3 -m pip install --quiet -r "$RUNNER_TEMP/worker/requirements.txt"
+
+      - name: Run worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/worker"
+          PYTHONPATH="$RUNNER_TEMP/worker" python3 -m scout_v2.workers.core \
+            --job "$RUNNER_TEMP/job.json" \
+            --out "$RUNNER_TEMP/artifacts" \
+            --repo-dir "$RUNNER_TEMP/repo" \
+            --backend github_actions \
+            --emit-envelope
+
+      - name: Upload artifacts
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: oss-result-${{ inputs.job_id }}
+          path: ${{ runner.temp }}/artifacts/
+          retention-days: 3
